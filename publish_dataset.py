@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-# from dbs.apis.dbsClient import DbsApi
+from dbs.apis.dbsClient import DbsApi
 import sys,time,uuid,commands,re,pprint,os
-# from RestClient.ErrorHandling.RestClientExceptions import HTTPError
+from RestClient.ErrorHandling.RestClientExceptions import HTTPError
 from optparse import OptionParser
 
 description = """
@@ -28,7 +28,7 @@ parser.add_option("-t", "--tier", dest="tier", metavar="TIER", default="USER",
                   help="Data tier (last part of the dataset name). Default: %default")
 parser.add_option("--publish", dest="publish", action="store_true", default=False,
                   help="Data is uploaded to DBS only with this flag. Otherwise a dry run is performed. It's a security measure.")
-parser.add_option("-d", "--dataset", dest="dataset", action="store_true", default=False,
+parser.add_option("-d", "--dataset", dest="dataset", metavar="NAME",
                   help="Specify publication dataset explicitely")
 
 cmssw_version = ''
@@ -73,46 +73,57 @@ def get_run_lumi_list(lfn):
     return file_lumi_list
 
 def getFileName(lfn):
-     match = re.search('([^/]+).root$',lfn)
+     match = re.search(r'([^/]+).root$',lfn)
      if match:
           return match.group(1)
      return ""
 
-def getDirecotyName(lfn):
-     match = re.search('([^/]+)/[^/]+.root$',lfn)
+def getDirectoryName(lfn):
+     match = re.search(r'([^/]+)/[^/]+.root$',lfn)
      if match:
           return match.group(1)
      return ""
 
+dbsWriter = DbsApi(url="https://cmsweb.cern.ch/dbs/prod/phys03/DBSWriter/")
+dbsReader = DbsApi(url="https://cmsweb.cern.ch/dbs/prod/phys03/DBSReader/")
 
 # Get files to be published
 # TODO: check that they don't belong to some dataset already
-files = []
+all_files = []
 if options.files:
-    files = options.files.split(',')
+    all_files = options.files.split(',')
 if options.file:
     with open(options.file,'r') as fIN:
          for file in fIN:
               if re.search('\S',file):
-                   files.append(file.strip('\n'))
-if len(files)==0:
-     raise Exception("Failed to get file names for publication")
+                   all_files.append(file.strip('\n'))
+valid_files = []
+for file in all_files:
+     if not re.search(r'.root$',file): 
+          print "Not a ROOT file: %s skipped" % file
+          continue
+     datasets = dbsReader.listDatasets(logical_file_name=file)
+     if len(datasets)>0:
+          print "File %s is already known to DBS. Skipped" % file
+          pprint.pprint(datasets)
+          continue
+     valid_files.append(file)
+
+if len(valid_files)==0:
+     raise Exception("Nothing to publish")
 
 print "Files to publish:"
-pprint.pprint(files)
-
-dbsWriter = DbsApi(url="https://cmsweb.cern.ch/dbs/prod/phys03/DBSWriter/")
-dbsReader = DbsApi(url="https://cmsweb.cern.ch/dbs/prod/phys03/DBSReader/")
+pprint.pprint(valid_files)
 
 # Publication dataset name
 primary_dataset_name = None
 if options.primary_ds:
      primary_dataset_name = options.primary_ds
 else:
-     if len(files)==1:
-          primary_dataset_name = getFileName(files[0])
+     if len(valid_files)==1:
+          primary_dataset_name = getFileName(valid_files[0])
      else:     
-          primary_dataset_name = getDirectoryName(files[0])
+          primary_dataset_name = getDirectoryName(valid_files[0])
 if not primary_dataset_name:
      raise Exception("Failed to get primary dataset name")
 
@@ -122,7 +133,13 @@ if options.dataset:
 else:
      dataset_name = "/%s/%s-%s-v*/%s" % (primary_dataset_name,options.campaign,options.info,options.tier)
      maxVersion = None
-     # TODO: search for similar datasets and get max version
+     # search for similar datasets and get max version
+     datasets = dbsReader.listDatasets(dataset=dataset_name, detail=True)
+     for ds in datasets:
+          match = re.search(r'-v(\d+)/[^/]+$',ds['dataset'])
+          if match:
+               if not maxVersion or maxVersion < int(match.group(1)):
+                    maxVersion = int(match.group(1))
      version = 1
      if maxVersion:
           version = maxVersion + 1
@@ -130,16 +147,11 @@ else:
 
 print dataset_name 
 
-# dataset = "%s/%s-v*/%s" % (
-sys.exit()
-
 # =======================================================================================================
 
+print "Prepare meta data for publication"
 
 empty, primary_ds_name, proc_name, ds_tier =  dataset_name.split('/')
-
-datasets = dbsReader.listPrimaryDatasets(primary_ds_name=primary_ds_name)
-print datasets
 
 # Find files already published in this dataset.
 existingDBSFiles = dbsReader.listFiles(dataset = dataset_name, detail = True)
@@ -151,7 +163,7 @@ print " (%d valid, %d invalid)." % (len(existingFilesValid), len(existingFiles) 
 # Get a list of files that need to be acted on
 files_to_publish = []
 files_to_change_status = []
-for file in files:
+for file in valid_files:
     if file not in existingFiles:
         files_to_publish.append(file)
     elif file not in existingFilesValid:
@@ -165,9 +177,9 @@ print "Found %d files that require status change." % len(files_to_change_status)
 
 # ============================================================================
 
-campaign = 'RunIIWinter15pLHE'
+campaign = options.campaign
 
-output_config = {'release_version': 'CMSSW_7_4_1_patch2',
+output_config = {'release_version': cmssw_version,
                  'pset_hash': 'NoHash',
                  'app_name': 'crab',
                  'output_module_label': 'o',
