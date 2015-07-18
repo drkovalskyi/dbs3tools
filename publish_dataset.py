@@ -30,6 +30,8 @@ parser.add_option("--publish", dest="publish", action="store_true", default=Fals
                   help="Data is uploaded to DBS only with this flag. Otherwise a dry run is performed. It's a security measure.")
 parser.add_option("-d", "--dataset", dest="dataset", metavar="NAME",
                   help="Specify publication dataset explicitely")
+parser.add_option("-v", "--verbose", dest="verbose", action="store_true", default=False,
+                  help="Show debugging information")
 
 cmssw_version = ''
 if 'CMSSW_VERSION' in os.environ:
@@ -112,8 +114,9 @@ for file in all_files:
 if len(valid_files)==0:
      raise Exception("Nothing to publish")
 
-print "Files to publish:"
-pprint.pprint(valid_files)
+if options.verbose:
+     print "Files to publish:"
+     pprint.pprint(valid_files)
 
 # Publication dataset name
 primary_dataset_name = None
@@ -145,11 +148,9 @@ else:
           version = maxVersion + 1
      dataset_name = "/%s/%s-%s-v%d/%s" % (primary_dataset_name,options.campaign,options.info,version,options.tier)
 
-print dataset_name 
+print "Dataset name: %s" % dataset_name 
 
 # =======================================================================================================
-
-print "Prepare meta data for publication"
 
 empty, primary_ds_name, proc_name, ds_tier =  dataset_name.split('/')
 
@@ -157,8 +158,9 @@ empty, primary_ds_name, proc_name, ds_tier =  dataset_name.split('/')
 existingDBSFiles = dbsReader.listFiles(dataset = dataset_name, detail = True)
 existingFiles = [f['logical_file_name'] for f in existingDBSFiles]
 existingFilesValid = [f['logical_file_name'] for f in existingDBSFiles if f['is_file_valid']]
-print "Dataset %s already contains %d files" % (dataset_name, len(existingFiles)),
-print " (%d valid, %d invalid)." % (len(existingFilesValid), len(existingFiles) - len(existingFilesValid))
+if len(existingFiles)>0:
+     print "Dataset %s already contains %d files" % (dataset_name, len(existingFiles)),
+     print " (%d valid, %d invalid)." % (len(existingFilesValid), len(existingFiles) - len(existingFilesValid))
 
 # Get a list of files that need to be acted on
 files_to_publish = []
@@ -176,6 +178,7 @@ print "Found %d files that require status change." % len(files_to_change_status)
 
 
 # ============================================================================
+print "Preparing meta data for publication"
 
 campaign = options.campaign
 
@@ -241,7 +244,8 @@ blockDict = {
 blockDict['block']['file_count'] = len(files)
 blockDict['block']['block_size'] = sum([int(file['file_size']) for file in files])
 
-pprint.pprint(blockDict)
+if options.verbose:
+     pprint.pprint(blockDict)
 
 if not options.publish:
      print "Dry run ended. Please use --publish option if you want to publish files in DBS"
@@ -277,7 +281,6 @@ except HTTPError, he:
 # datasets = dbsReader.listDatasets(dataset='/MinBias_TuneCUETP8M1_13TeV-pythia8/RunIIWinter15GS-MCRUN2_71_V1-v1/GEN-SIM', detail=True)
 # print datasets
 
-dataset_name = "/DMScalar_ttbar01j_mphi_200_mchi_150_gSM_1p0_gDM_1p0/RunIIWinter15pLHE-MCRUN2-LHE-v1/USER"
 # acquisition_era_name 
 # release_version $CMSSW_VERSION 
 # global_tag
