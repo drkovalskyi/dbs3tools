@@ -1,31 +1,36 @@
 #!/usr/bin/env python
-from dbs.apis.dbsClient import DbsApi
+# from dbs.apis.dbsClient import DbsApi
 import sys,time,uuid,commands,re,pprint,os
-from RestClient.ErrorHandling.RestClientExceptions import HTTPError
+# from RestClient.ErrorHandling.RestClientExceptions import HTTPError
 from optparse import OptionParser
 
 description = """
 Simple tool to publish a set of files in DBS3. Minimal support for
 issues and complex cases. Dataset name format:
                                              
-/PrimaryDataset/Campaign-v[number]/Tier
+/PrimaryDataset/Campaign-Info-v[number]/Tier
                                           
 Version number is auto-assigned by based on already published dataset
 names.
 """
 parser = OptionParser(usage = "\n\t%prog [options]", description = description, epilog= ' ')
-parser.add_option("-l", "--list", dest="files", help="Comma separated list of logical file names to publish without whitespaces.",
-                  metavar="FILES")
-parser.add_option("-f", "--file", dest="file", help="File that contains a list of files to be published.",
-                  metavar="FILE")
+parser.add_option("-l", "--list", dest="files", metavar="FILES",
+                  help="Comma separated list of logical file names to publish without whitespaces.")
+parser.add_option("-f", "--file", dest="file", metavar="FILE",
+                  help="File that contains a list of files to be published.")
 parser.add_option("-p", "--primary", dest="primary_ds", metavar="PD",
                   help="Primary dataset name (first part of the dataset name). By default common part of the file names is used.")
-parser.add_option("-c", "--campaign", dest="campaign", metavar="CAMPAIGN", default="RunIIWinter15pLHE-MCRUN2-LHE",
+parser.add_option("-c", "--campaign", dest="campaign", metavar="TEXT", default="RunIIWinter15pLHE",
+                  help="Campaign name used as a reference (middle part of the dataset name). Default: %default")
+parser.add_option("-i", "--info", dest="info", metavar="TEXT", default="MCRUN2-LHE",
                   help="Campaign name used as a reference (middle part of the dataset name). Default: %default")
 parser.add_option("-t", "--tier", dest="tier", metavar="TIER", default="USER",
                   help="Data tier (last part of the dataset name). Default: %default")
-parser.add_option("-r", "--dryrun", dest="dryrun", action="store_true", default=False,
-                  help="Dry run without publishing anything.")
+parser.add_option("--publish", dest="publish", action="store_true", default=False,
+                  help="Data is uploaded to DBS only with this flag. Otherwise a dry run is performed. It's a security measure.")
+parser.add_option("-d", "--dataset", dest="dataset", action="store_true", default=False,
+                  help="Specify publication dataset explicitely")
+
 cmssw_version = ''
 if 'CMSSW_VERSION' in os.environ:
      cmssw_version = os.environ['CMSSW_VERSION']
@@ -40,7 +45,48 @@ if not options.file and not options.files:
 
 # ==========================================================================
 
-# gets files to be published
+sys.argv = [] # clear up list of arguments to avoid confusing ROOT
+import ROOT, array
+ROOT.gROOT.SetBatch(True)
+
+def get_file_size(lfn):
+    (status,result) = commands.getstatusoutput("xrd cms-xrd-global.cern.ch stat %s"%lfn)
+    if status!=0: raise Exception("Failed to stat file %s using xrd"%lfn)
+    match = re.search('Size:\s*(\d+)',result)
+    if match:
+        return int(match.group(1))
+    raise Exception("Failed to get file size for file %s" % lfn)
+
+def get_nevents(lfn):
+    f = ROOT.TFile.Open('root://cms-xrd-global.cern.ch/%s'%lfn)
+    if not f: raise Exception("Failed to open file %s"%lfn)
+    tree = f.Get("Events")
+    return tree.GetEntries()
+
+def get_run_lumi_list(lfn):
+    file_lumi_list = []
+    f = ROOT.TFile.Open('root://cms-xrd-global.cern.ch/%s'%lfn)
+    tree = f.Get("LuminosityBlocks")
+    for entry in tree:
+        file_lumi_list.append({'lumi_section_num':entry.LuminosityBlockAuxiliary.luminosityBlock(),
+                               'run_num':entry.LuminosityBlockAuxiliary.run()})
+    return file_lumi_list
+
+def getFileName(lfn):
+     match = re.search('([^/]+).root$',lfn)
+     if match:
+          return match.group(1)
+     return ""
+
+def getDirecotyName(lfn):
+     match = re.search('([^/]+)/[^/]+.root$',lfn)
+     if match:
+          return match.group(1)
+     return ""
+
+
+# Get files to be published
+# TODO: check that they don't belong to some dataset already
 files = []
 if options.files:
     files = options.files.split(',')
@@ -55,66 +101,40 @@ if len(files)==0:
 print "Files to publish:"
 pprint.pprint(files)
 
-# form output dataset name
-primary_dataset_name = ""
+dbsWriter = DbsApi(url="https://cmsweb.cern.ch/dbs/prod/phys03/DBSWriter/")
+dbsReader = DbsApi(url="https://cmsweb.cern.ch/dbs/prod/phys03/DBSReader/")
+
+# Publication dataset name
+primary_dataset_name = None
+if options.primary_ds:
+     primary_dataset_name = options.primary_ds
+else:
+     if len(files)==1:
+          primary_dataset_name = getFileName(files[0])
+     else:     
+          primary_dataset_name = getDirectoryName(files[0])
+if not primary_dataset_name:
+     raise Exception("Failed to get primary dataset name")
+
+dataset_name = None
+if options.dataset:
+     dataset_name = options.dataset
+else:
+     dataset_name = "/%s/%s-%s-v*/%s" % (primary_dataset_name,options.campaign,options.info,options.tier)
+     maxVersion = None
+     # TODO: search for similar datasets and get max version
+     version = 1
+     if maxVersion:
+          version = maxVersion + 1
+     dataset_name = "/%s/%s-%s-v%d/%s" % (primary_dataset_name,options.campaign,options.info,version,options.tier)
+
+print dataset_name 
+
 # dataset = "%s/%s-v*/%s" % (
 sys.exit()
 
-# 
-# Info
-#
-# Missing: file_lumi_list
-# Example:
-# 'file_lumi_list': [{u'lumi_section_num': 4027414, u'run_num': 1}, 
-#                  {u'lumi_section_num': 26422, u'run_num': 2},
-#                  41{u'lumi_section_num': 29838, u'run_num': 3}]
-# https://cmsweb.cern.ch/dbs/prod/phys03/DBSWriter/
-# https://github.com/dmwm/AsyncStageout/blob/master/src/python/AsyncStageOut/PublisherWorker.py#L743
-# xrd eoscms stat /store/user/dmytro/lhe/DM_ttbar01j/DMScalar_ttbar01j_mphi_200_mchi_150_gSM_1p0_gDM_1p0.root
-# xrd cms-xrd-global.cern.ch stat /store/user/dmytro/lhe/DM_ttbar01j/DMScalar_ttbar01j_mphi_200_mchi_150_gSM_1p0_gDM_1p0.root
-# https://svnweb.cern.ch/trac/CMSDMWM/browser/DBS/trunk/Client/tests/dbsclient_t/unittests/blockdump.dict
-# 
-
-dbsWriter = DbsApi(url="https://cmsweb.cern.ch/dbs/prod/phys03/DBSWriter/")
-dbsReader = DbsApi(url="https://cmsweb.cern.ch/dbs/prod/phys03/DBSReader/")
-# dbsReader = DbsApi(url="https://cmsweb.cern.ch/dbs/prod/global/DBSReader/")
-
-# datasets = dbsReader.listDatasets(dataset='/MinBias_TuneCUETP8M1_13TeV-pythia8/RunIIWinter15GS-MCRUN2_71_V1-v1/GEN-SIM', detail=True)
-# print datasets
-
-dataset_name = "/DMScalar_ttbar01j_mphi_200_mchi_150_gSM_1p0_gDM_1p0/RunIIWinter15pLHE-MCRUN2-LHE-v1/USER"
-# acquisition_era_name 
-# release_version $CMSSW_VERSION 
-# global_tag
-# max_files_per_block
-
 # =======================================================================================================
 
-
-sys.argv = [] # clear up list of arguments to avoid confusing ROOT
-import ROOT, array
-ROOT.gROOT.SetBatch(True)
-
-def get_file_size(lfn):
-    result = commands.getoutput("xrd cms-xrd-global.cern.ch stat %s"%lfn)
-    match = re.search('Size:\s*(\d+)',result)
-    if match:
-        return int(match.group(1))
-    raise Exception("Failed to get file size for file %s" % lfn)
-
-def get_nevents(lfn):
-    f = ROOT.TFile.Open('root://cms-xrd-global.cern.ch/%s'%lfn)
-    tree = f.Get("Events")
-    return tree.GetEntries()
-
-def get_run_lumi_list(lfn):
-    file_lumi_list = []
-    f = ROOT.TFile.Open('root://cms-xrd-global.cern.ch/%s'%lfn)
-    tree = f.Get("LuminosityBlocks")
-    for entry in tree:
-        file_lumi_list.append({'lumi_section_num':entry.LuminosityBlockAuxiliary.luminosityBlock(),
-                               'run_num':entry.LuminosityBlockAuxiliary.run()})
-    return file_lumi_list
 
 empty, primary_ds_name, proc_name, ds_tier =  dataset_name.split('/')
 
@@ -211,6 +231,10 @@ blockDict['block']['block_size'] = sum([int(file['file_size']) for file in files
 
 pprint.pprint(blockDict)
 
+if not options.publish:
+     print "Dry run ended. Please use --publish option if you want to publish files in DBS"
+     sys.exit()
+
 # Insert primary dataset name. It's safe to do it for already existing primary datasets
 primds_config = {'primary_ds_name': primary_ds_name, 'primary_ds_type': 'mc'}
 dbsWriter.insertPrimaryDataset(primds_config)
@@ -220,4 +244,30 @@ try:
     dbsWriter.insertBulkBlock(blockDict)
 except HTTPError, he:
     print he
+
+# 
+# Info
+#
+# Missing: file_lumi_list
+# Example:
+# 'file_lumi_list': [{u'lumi_section_num': 4027414, u'run_num': 1}, 
+#                  {u'lumi_section_num': 26422, u'run_num': 2},
+#                  41{u'lumi_section_num': 29838, u'run_num': 3}]
+# https://cmsweb.cern.ch/dbs/prod/phys03/DBSWriter/
+# https://github.com/dmwm/AsyncStageout/blob/master/src/python/AsyncStageOut/PublisherWorker.py#L743
+# xrd eoscms stat /store/user/dmytro/lhe/DM_ttbar01j/DMScalar_ttbar01j_mphi_200_mchi_150_gSM_1p0_gDM_1p0.root
+# xrd cms-xrd-global.cern.ch stat /store/user/dmytro/lhe/DM_ttbar01j/DMScalar_ttbar01j_mphi_200_mchi_150_gSM_1p0_gDM_1p0.root
+# https://svnweb.cern.ch/trac/CMSDMWM/browser/DBS/trunk/Client/tests/dbsclient_t/unittests/blockdump.dict
+# 
+
+# dbsReader = DbsApi(url="https://cmsweb.cern.ch/dbs/prod/global/DBSReader/")
+
+# datasets = dbsReader.listDatasets(dataset='/MinBias_TuneCUETP8M1_13TeV-pythia8/RunIIWinter15GS-MCRUN2_71_V1-v1/GEN-SIM', detail=True)
+# print datasets
+
+dataset_name = "/DMScalar_ttbar01j_mphi_200_mchi_150_gSM_1p0_gDM_1p0/RunIIWinter15pLHE-MCRUN2-LHE-v1/USER"
+# acquisition_era_name 
+# release_version $CMSSW_VERSION 
+# global_tag
+# max_files_per_block
 
