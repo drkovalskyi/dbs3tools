@@ -12,12 +12,16 @@ in DBS, i.e. it's the total dataset size, not only the input run.
 """
 
 parser = OptionParser(usage = "\n\t%prog [options]", description = description, epilog= ' ')
-parser.add_option("-t", "--tier", dest="tiers", metavar="LIST",
-                  help="comma separated list of data tiers without whitespaces.")
+parser.add_option("-t", "--tier", dest="tiers", metavar="LIST", default = "AOD,MINIAOD",
+                  help="comma separated list of data tiers without whitespaces. Default: %default")
 parser.add_option("-r", "--run", dest="run", metavar="NUMBER",
                   help="run number")
+parser.add_option("-s", "--size", dest="size", metavar="NUMBER", default=10000,
+                  help="Projected size. Default: %default GB")
+parser.add_option("-p", "--pattern", dest="pattern", metavar="TEXT",
+                  help="Dataset pattern. Example: '/*/Run2015*-PromptReco-v*/AOD'")
 parser.add_option("-i", "--injector", dest="injector", metavar="PATH",
-                  default = '/afs/cern.ch/user/d/dmytro/DDM/IntelROCCS/DataDealer/src/assignDatasetToSite.py',
+                  default = '/afs/cern.ch/user/d/dmytro/DDM/IntelROCCS/DataDealer/assignDatasetToSite.py',
                   help="full path to assignDatasetToSite.py script. Default: %default")
 parser.add_option("-n", "--copies", dest="copies", metavar="NUMBER",
                   default = 4,
@@ -27,9 +31,18 @@ parser.add_option("--exec", dest="execute", action="store_true", default=False,
 
 (options, args) = parser.parse_args()
 
-if not options.run or not options.injector or not options.tiers:
+if not options.injector:
+     print "ERROR: injector path is not set"
      parser.print_help()
-     sys.exit()
+     sys.exit(1)
+
+if (not options.run or not options.tiers) and not options.pattern:
+     parser.print_help()
+     sys.exit(1)
+
+if options.pattern:
+     print "ERROR: not implemented yet"
+     sys.exit(1)
 
 datatiers = None
 if options.tiers:
@@ -49,6 +62,8 @@ for ds in datasets:
      blocks = api.listBlockSummaries(dataset = ds['dataset'])
      ds_size = blocks[0]['file_size']/pow(2,30)
      print " \t %0.0f GB" % (ds_size)
+     if options.size:
+          ds_size = options.size
      
      command = "%s --dataset=%s --nCopies=%d --expectedSizeGb=%d" % (options.injector,ds['dataset'],options.copies,int(ds_size))
      if options.execute:
