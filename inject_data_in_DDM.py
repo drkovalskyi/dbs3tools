@@ -115,7 +115,7 @@ def get_subscription_information(dataset):
           report['PhEDEx'] = True
           subscriptions = datasets[0]['subscription']
           for subscription in subscriptions:
-               incomplete = float(subscription['percent_bytes']) < 100
+               incomplete = (subscription['percent_bytes']==None) or (subscription['percent_bytes'] < 100)
                if not incomplete: report['nComplete'] += 1
                if subscription['group']=='AnalysisOps': 
                     report['nAnalysisOps'] += 1
@@ -189,7 +189,14 @@ for ds in datasets:
           if run_command(command):
                print "ERROR: permanent error. Cannot proceed."
                sys.exit(1)
-pprint.pprint(summary)
+# pprint.pprint(summary)
+print "NotInPhedex:"
+pprint.pprint(summary["NotInPhedex"])
+print "NoCompleteCopyAnywhere:"
+pprint.pprint(summary["NoCompleteCopyAnywhere"])
+print "MayGetLost:"
+pprint.pprint(summary["MayGetLost"])
+
 print "Number of datasets registered in DBS, but missing in PhEDEx: %d" % (len(summary["NotInPhedex"]))
 print "Number of datasets without complete copy: %d" % (len(summary["NoCompleteCopyAnywhere"]))
 print "Number of datasets that may get lost: %d" % (len(summary["MayGetLost"]))
